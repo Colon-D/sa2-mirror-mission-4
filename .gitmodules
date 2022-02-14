@@ -1,0 +1,9 @@
+[submodule "extern/sa2-mod-loader"]
+	path = extern/sa2-mod-loader
+	url = https://github.com/X-Hax/sa2-mod-loader.git
+[submodule "extern/mod-loader-common"]
+	path = extern/mod-loader-common
+	url = https://github.com/sonicretro/mod-loader-common.git
+[submodule "extern/SA2FlipScreen"]
+	path = extern/SA2FlipScreen
+	url = https://github.com/Justin113D/SA2FlipScreen.git
