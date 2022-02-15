@@ -161,9 +161,11 @@ bool mirror_mission(const LevelIDs level_id, const char mission_number) {
 	}
 }
 
-/// returns whether the current mission should be mirrored
+/// returns whether not in menu and the current mission should be mirrored
 bool mirror_current_mission() {
-	return mirror_mission(static_cast<LevelIDs>(CurrentLevel), MissionNum);
+	return
+		GameState != GameStates::GameStates_Inactive &&
+		mirror_mission(static_cast<LevelIDs>(CurrentLevel), MissionNum);
 }
 
 /// returns whether the current character is on a board
@@ -480,7 +482,10 @@ extern "C" {
 	__declspec(dllexport) void __cdecl OnInput() {
 		// hacking controls
 		// if current mission should be mirrored
-		if (mirror_current_mission()) {
+		if (
+			mirror_current_mission() &&
+			GameState == GameStates::GameStates_Ingame
+		) {
 			// if flipped vertically, flip controls
 			if (mm4_flipmode == flipscreen::flipmode::flipmode_Vertical) {
 				flip_controls();
