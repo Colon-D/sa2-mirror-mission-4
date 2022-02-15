@@ -43,14 +43,83 @@ std::array mirror_mission_route_101_280{
 	false  // hard mode
 };
 
+/// whether the chao world should be mirrored or not (buggy)
 bool mirror_chao_world{ false };
+
+/// action characters mirror (boards animations are buggy)
+enum class mirror_action_characters {
+	no,
+	yes,
+	yes_off_board
+};
+auto mirror_action_characters = mirror_action_characters::yes_off_board;
+/// shooting characters mirror (shooting can be buggy)
+bool mirror_shooting_characters{ true };
+/// treasure hunting characters mirror (nothing I know of is buggy)
+bool mirror_treasure_hunting_characters{ true };
+// kart racing and mechless tails and eggman do not deserve an option >:(
+// unless someone wants one, I guess
 
 /// the player should be flipped on the x axis, facing the camera...
 bool mirror_player_x_axis{ false };
 /// the player should be flipped on the y axis, up and down and all around!
 bool mirror_player_y_axis{ false };
 /// the player should be flipped on the z axis, kinda epic moment?
-bool mirror_player_z_axis{ true };
+auto mirror_player_z_axis{ true };
+
+/// character classes: action, shooting, treasure hunting or other
+enum class character_class {
+	action, // sonic, shadow, amy and metal sonic
+	shooting, // tails, eggman, chao walker and dark chao walker
+	treasure_hunting, // knuckles, rouge, tikal and chaos
+	other // super sonic, super shadow, mechless tails, mechless eggman and
+	      // whoever the hell B is
+};
+
+/// returns the current character class
+character_class current_character_class() {
+	switch (CurrentCharacter) {
+	case Characters_Sonic:
+		return character_class::action;
+		break;
+	case Characters_Shadow:
+		return character_class::action;
+		break;
+	case Characters_Knuckles:
+		return character_class::treasure_hunting;
+		break;
+	case Characters_Rouge:
+		return character_class::treasure_hunting;
+		break;
+	case Characters_MechTails:
+		return character_class::shooting;
+		break;
+	case Characters_MechEggman:
+		return character_class::shooting;
+		break;
+	case Characters_Amy:
+		return character_class::action;
+		break;
+	case Characters_MetalSonic:
+		return character_class::action;
+		break;
+	case Characters_ChaoWalker:
+		return character_class::shooting;
+		break;
+	case Characters_DarkChaoWalker:
+		return character_class::shooting;
+		break;
+	case Characters_Tikal:
+		return character_class::treasure_hunting;
+		break;
+	case Characters_Chaos:
+		return character_class::treasure_hunting;
+		break;
+	default:
+		return character_class::other;
+		break;
+	}
+}
 
 /// result of adding two flipscreens together
 struct flipmode_addition_result {
@@ -93,8 +162,59 @@ bool mirror_mission(const LevelIDs level_id, const char mission_number) {
 }
 
 /// returns whether the current mission should be mirrored
-bool mirror_current() {
+bool mirror_current_mission() {
 	return mirror_mission(static_cast<LevelIDs>(CurrentLevel), MissionNum);
+}
+
+/// returns whether the current character is on a board
+bool on_board() {
+	return
+		MainCharObj1[0] &&
+		current_character_class() == character_class::action &&
+		(
+			MainCharObj1[0]->Action == Actions::Action_Board ||
+			MainCharObj1[0]->Action == Actions::Action_BoardBrake ||
+			MainCharObj1[0]->Action == Actions::Action_BoardBump ||
+			MainCharObj1[0]->Action == Actions::Action_BoardFall ||
+			MainCharObj1[0]->Action == Actions::Action_BoardJump ||
+			MainCharObj1[0]->Action == Actions::Action_BoardTrick
+		);
+}
+
+/// returns whether the current character in their current state in the 
+/// current mission should be mirrored (true) or unmirrored (false)
+bool mirror_player() {
+	if (mirror_current_mission()) {
+		switch (current_character_class()) {
+		case character_class::action:
+			switch (mirror_action_characters) {
+			case mirror_action_characters::no:
+				return false;
+				break;
+			case mirror_action_characters::yes:
+				return true;
+				break;
+			case mirror_action_characters::yes_off_board:
+				return !on_board();
+				break;
+			}
+			break;
+		case character_class::shooting:
+			return mirror_shooting_characters;
+			break;
+		case character_class::treasure_hunting:
+			return mirror_treasure_hunting_characters;
+			break;
+		case character_class::other:
+			return true;
+			break;
+		}
+		// here should never be reached... unless?
+		return true;
+	}
+	else {
+		return false;
+	}
 }
 
 /// flips the controls, left becomes right and vice versa
@@ -111,7 +231,7 @@ flipscreen::Matrix4x4* matrix4x4_Lookat_replacement(
 	flipscreen::Vector3* up,
 	flipscreen::Matrix4x4* output
 ) {
-	if (mirror_current()) {
+	if (mirror_current_mission()) {
 		const auto result = loaded_flipmode + mm4_flipmode;
 		flipscreen::active_flipmode = result.flipmode;
 		flipscreen::rotationRadians =
@@ -184,8 +304,7 @@ extern "C" {
 				mm4_settings->getString("Mirrored Flipmode", "Vertical");
 			if (s_flipmode == "Horizontal") {
 				mm4_flipmode = flipscreen::flipmode::flipmode_Horizontal;
-			}
-			else if (s_flipmode != "Vertical") {
+			} else if (s_flipmode != "Vertical") {
 				mm4_flipmode = flipscreen::flipmode::flipmode_None;
 			}
 			mm4_rotation =
@@ -261,8 +380,26 @@ extern "C" {
 				mirror_player_y_axis
 			);
 			mirror_player_z_axis = mm4_settings->getBool(
-				"Mirror Player Axis",
+				"Mirror Player Z Axis",
 				mirror_player_z_axis
+			);
+
+			const auto s_mir_act_char = mm4_settings->getString(
+				"Mirror Action Characters",
+				"Yes, off board"
+			);
+			if (s_mir_act_char == "No") {
+				mirror_action_characters = mirror_action_characters::no;
+			} else if (s_mir_act_char == "Yes") {
+				mirror_action_characters = mirror_action_characters::yes;
+			}
+			mirror_shooting_characters = mm4_settings->getBool(
+				"Mirror Shooting Characters",
+				mirror_shooting_characters
+			);
+			mirror_treasure_hunting_characters = mm4_settings->getBool(
+				"Mirror Treasure Hunting Characters",
+				mirror_treasure_hunting_characters
 			);
 		}
 
@@ -274,26 +411,51 @@ extern "C" {
 	}
 
 	__declspec(dllexport) void __cdecl OnFrame() {
-		// if current mission should be mirrored, mirror player
-		if (mirror_current()) {
-			if (MainCharObj1[0]) {
-				if (
-					mirror_player_x_axis &&
-					MainCharObj1[0]->Scale.x > 0.f
-				) {
-					MainCharObj1[0]->Scale.x = -MainCharObj1[0]->Scale.x;
+		if (MainCharObj1[0]) {
+			// WET principle in action, pro programmer hours
+			// x axis
+			if (mirror_player_x_axis) {
+				// if not mirrored and should be mirrored, mirror
+				if (MainCharObj1[0]->Scale.x > 0.f) {
+					if (mirror_player()) {
+						MainCharObj1[0]->Scale.x = -MainCharObj1[0]->Scale.x;
+					}
 				}
-				if (
-					mirror_player_y_axis &&
-					MainCharObj1[0]->Scale.y > 0.f
-				) {
-					MainCharObj1[0]->Scale.y = -MainCharObj1[0]->Scale.y;
+				// else, if mirrored and should not be mirrored, unmirror
+				else {
+					if (!mirror_player()) {
+						MainCharObj1[0]->Scale.x = -MainCharObj1[0]->Scale.x;
+					}
 				}
-				if (
-					mirror_player_z_axis &&
-					MainCharObj1[0]->Scale.z > 0.f
-				) {
-					MainCharObj1[0]->Scale.z = -MainCharObj1[0]->Scale.z;
+			}
+			// y axis
+			if (mirror_player_y_axis) {
+				// if not mirrored and should be mirrored, mirror
+				if (MainCharObj1[0]->Scale.y > 0.f) {
+					if (mirror_player()) {
+						MainCharObj1[0]->Scale.y = -MainCharObj1[0]->Scale.y;
+					}
+				}
+				// else, if mirrored and should not be mirrored, unmirror
+				else {
+					if (!mirror_player()) {
+						MainCharObj1[0]->Scale.y = -MainCharObj1[0]->Scale.y;
+					}
+				}
+			}
+			// z axis
+			if (mirror_player_z_axis) {
+				// if not mirrored and should be mirrored, mirror
+				if (MainCharObj1[0]->Scale.z > 0.f) {
+					if (mirror_player()) {
+						MainCharObj1[0]->Scale.z = -MainCharObj1[0]->Scale.z;
+					}
+				}
+				// else, if mirrored and should not be mirrored, unmirror
+				else {
+					if (!mirror_player()) {
+						MainCharObj1[0]->Scale.z = -MainCharObj1[0]->Scale.z;
+					}
 				}
 			}
 		}
@@ -302,7 +464,7 @@ extern "C" {
 	__declspec(dllexport) void __cdecl OnInput() {
 		// hacking controls
 		// if current mission should be mirrored
-		if (mirror_current()) {
+		if (mirror_current_mission()) {
 			// if flipped vertically, flip controls
 			if (mm4_flipmode == flipscreen::flipmode::flipmode_Vertical) {
 				flip_controls();
