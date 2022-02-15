@@ -219,9 +219,25 @@ bool mirror_player() {
 
 /// flips the controls, left becomes right and vice versa
 void flip_controls() {
+	// swap both analog sticks
 	ControllerPointers[0]->x1 = -ControllerPointers[0]->x1;
 	ControllerPointers[0]->x2 = -ControllerPointers[0]->x2;
+	// swap lt and rt, these triggers are represented by both an analog short 
+	// and a boolean bit
 	std::swap(ControllerPointers[0]->l, ControllerPointers[0]->r);
+	const auto l = (ControllerPointers[0]->on & Buttons_L) != 0;
+	const auto r = (ControllerPointers[0]->on & Buttons_R) != 0;
+	if (l) {
+		ControllerPointers[0]->on |= Buttons_R;
+	} else {
+		ControllerPointers[0]->on &= ~Buttons_R;
+	}
+	if (r) {
+		ControllerPointers[0]->on |= Buttons_L;
+	}
+	else {
+		ControllerPointers[0]->on &= ~Buttons_L;
+	}
 }
 
 /// mirrors screens when current mission should be mirrored
