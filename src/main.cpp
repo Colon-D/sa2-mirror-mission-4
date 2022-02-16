@@ -3,6 +3,7 @@
 #include <array>
 #include <SA2ModLoader.h>
 #include <IniFile.hpp>
+#include <UsercallFunctionHandler.h>
 // I probably should not be including a source file, 
 // but it has a function I want (matrix4x4_Lookat())
 namespace flipscreen {
@@ -236,8 +237,7 @@ void flip_controls() {
 	}
 	if (r) {
 		ControllerPointers[0]->on |= Buttons_L;
-	}
-	else {
+	} else {
 		ControllerPointers[0]->on &= ~Buttons_L;
 	}
 }
@@ -282,6 +282,310 @@ void __declspec(naked) matrix4x4_Lookat_hook_replacement() {
 	}
 }
 
+/// returns if mech angles need fixed.
+/// angles seem to need fixed when the player is mirrored on the x xor z axis.
+/// I found the fixes by hours of trial and error, so I can not really explain 
+/// them. Something to do with needing to either add 180 degrees (for the gun) 
+/// or mirror the angle (for the top half of the mech, the part that spins)
+bool mech_angles_need_fixed() {
+	return mirror_player() && (mirror_player_x_axis != mirror_player_z_axis);
+}
+
+/// seems to calculate a change in angle based on two
+/// (maybe three?) normalized directional vectors
+/// \param a1 points up?
+/// \param a2 current gun angle
+/// \param a3 target gun angle
+/// \returns change in angle needed [0x0000, 0xFFFF]
+int change_in_gun_angle_maybe(Vector3* a1, Vector3* a2, Vector3* a3) {
+	if (mech_angles_need_fixed()) {
+		// pretend your gun angle is 180 degrees from where it is... I guess...
+		a2->x = -a2->x;
+		a2->z = -a2->z;
+	}
+	// --- call original function ---
+	return GenerateUsercallWrapper<int(*)(Vector3*, Vector3*, Vector3*)> (
+		rEAX, 0x4469E0,
+		rEBX, rEDI, rESI
+	)(a1, a2, a3);
+}
+
+/// I just can't really comprehend what this does...
+/// psuedocode does not help my smol brain :(
+/// \param result lhs of the addition operation, I think [0x0000?, 0xFFFF?]?
+/// \param a2 maybe rhs of the addition operation????
+/// \param a3 or this could be the rhs of the addition operation, what?
+/// \returns the result of the addition operation, perhaps?!?//1/!/1!/?
+int add_angles_maybe_but_probably_not(int result, const int a2, const short a3) {
+	// mirror angle... if that will make you "happy"...
+	if (mech_angles_need_fixed()) {
+		result = 0xFFFF - result;
+	}
+	// --- call original function ---
+	return GenerateUsercallWrapper<int(*)(int, int, short)>(
+		rEAX, 0x446960,
+		rEAX, rEDX, rCX
+	)(result, a2, a3);
+}
+
+/// this is stolen from the mod loader's GenerateUsercallHook function.
+/// I encountered what appears to be a bug, at least on my PC. When replacing 
+/// a call, this writes a jump instead of another call. This is because 
+/// dereferencing a char pointer seems to allow values above 0xFF. I believe 
+/// chars are stored as integers for efficiency, and since the address is next 
+/// to the char in memory without padding, part of the address corrupts the 
+/// check for whether this is replacing a function or not.
+/// I solved this by adding a 0xFF bitmask to the check.
+template<typename T, typename... TArgs>
+constexpr void const GenerateUsercallHook_Fixed(T func, int ret, intptr_t address, TArgs... args) {
+	const size_t argc = sizeof...(TArgs);
+	int argarray[] = { args... };
+	int stackcnt = 0;
+	int memsz = 0;
+	for (size_t i = 0; i < argc; ++i) {
+		switch (argarray[i]) {
+		case rEAX:
+		case rAX:
+		case rAL:
+		case rEBX:
+		case rBX:
+		case rBL:
+		case rECX:
+		case rCX:
+		case rCL:
+		case rEDX:
+		case rDX:
+		case rDL:
+		case rESI:
+		case rSI:
+		case rEDI:
+		case rDI:
+		case rEBP:
+		case rBP:
+			++memsz;
+			break;
+		case rAH:
+			break;
+		case rBH:
+			break;
+		case rCH:
+			break;
+		case rDH:
+			break;
+		case stack1:
+		case stack2:
+		case stack4:
+			memsz += 4;
+			++stackcnt;
+			break;
+		}
+	}
+	memsz += 5; // call
+	switch (ret) {
+	case rEBX:
+	case rBX:
+	case rBL:
+	case rECX:
+	case rCX:
+	case rCL:
+	case rEDX:
+	case rDX:
+	case rDL:
+	case rESI:
+	case rSI:
+	case rEDI:
+	case rDI:
+	case rEBP:
+	case rBP:
+		memsz += 2;
+		break;
+	case rAH:
+		break;
+	case rBH:
+		break;
+	case rCH:
+		break;
+	case rDH:
+		break;
+	}
+	for (int i = 0; i < argc; ++i) {
+		if (argarray[i] == ret)
+			memsz += 3;
+		else
+			switch (argarray[i]) {
+			case rEAX:
+			case rAX:
+			case rAL:
+			case rAH:
+			case rEBX:
+			case rBX:
+			case rBL:
+			case rBH:
+			case rECX:
+			case rCX:
+			case rCL:
+			case rCH:
+			case rEDX:
+			case rDX:
+			case rDL:
+			case rDH:
+			case rESI:
+			case rSI:
+			case rEDI:
+			case rDI:
+			case rEBP:
+			case rBP:
+				++memsz;
+				break;
+			}
+	}
+	if (stackcnt > 0)
+		memsz += 3;
+	++memsz; // retn
+	auto codeData = AllocateCode(memsz);
+	int cdoff = 0;
+	char stackoff = stackcnt * 4;
+	for (int i = argc - 1; i >= 0; --i) {
+		switch (argarray[i]) {
+		case rEAX:
+		case rAX:
+		case rAL:
+			codeData[cdoff++] = 0x50;
+			break;
+		case rEBX:
+		case rBX:
+		case rBL:
+			codeData[cdoff++] = 0x53;
+			break;
+		case rECX:
+		case rCX:
+		case rCL:
+			codeData[cdoff++] = 0x51;
+			break;
+		case rEDX:
+		case rDX:
+		case rDL:
+			codeData[cdoff++] = 0x52;
+			break;
+		case rESI:
+		case rSI:
+			codeData[cdoff++] = 0x56;
+			break;
+		case rEDI:
+		case rDI:
+			codeData[cdoff++] = 0x57;
+			break;
+		case rEBP:
+		case rBP:
+			codeData[cdoff++] = 0x55;
+			break;
+		case rAH:
+			break;
+		case rBH:
+			break;
+		case rCH:
+			break;
+		case rDH:
+			break;
+		case stack1:
+		case stack2:
+		case stack4:
+			writebytes(codeData, cdoff, 0xFF, 0x74, 0x24, stackoff);
+			break;
+		}
+	}
+	WriteCall(&codeData[cdoff], func);
+	cdoff += 5;
+	switch (ret) {
+	case rEBX:
+	case rBX:
+	case rBL:
+		writebytes(codeData, cdoff, 0x89, 0xC3);
+		break;
+	case rECX:
+	case rCX:
+	case rCL:
+		writebytes(codeData, cdoff, 0x89, 0xC1);
+		break;
+	case rEDX:
+	case rDX:
+	case rDL:
+		writebytes(codeData, cdoff, 0x89, 0xC2);
+		break;
+	case rESI:
+	case rSI:
+		writebytes(codeData, cdoff, 0x89, 0xC6);
+		break;
+	case rEDI:
+	case rDI:
+		writebytes(codeData, cdoff, 0x89, 0xC7);
+		break;
+	case rEBP:
+	case rBP:
+		writebytes(codeData, cdoff, 0x89, 0xC5);
+		break;
+	case rAH:
+		break;
+	case rBH:
+		break;
+	case rCH:
+		break;
+	case rDH:
+		break;
+	}
+	for (int i = 0; i < argc; ++i) {
+		if (argarray[i] == ret)
+			writebytes(codeData, cdoff, 0x83, 0xC4, 4);
+		else
+			switch (argarray[i]) {
+			case rEAX:
+			case rAX:
+			case rAL:
+			case rAH:
+				codeData[cdoff++] = 0x58;
+				break;
+			case rEBX:
+			case rBX:
+			case rBL:
+			case rBH:
+				codeData[cdoff++] = 0x5B;
+				break;
+			case rECX:
+			case rCX:
+			case rCL:
+			case rCH:
+				codeData[cdoff++] = 0x59;
+				break;
+			case rEDX:
+			case rDX:
+			case rDL:
+			case rDH:
+				codeData[cdoff++] = 0x5A;
+				break;
+			case rESI:
+			case rSI:
+				codeData[cdoff++] = 0x5E;
+				break;
+			case rEDI:
+			case rDI:
+				codeData[cdoff++] = 0x5F;
+				break;
+			case rEBP:
+			case rBP:
+				codeData[cdoff++] = 0x5D;
+				break;
+			}
+	}
+	if (stackcnt > 0)
+		writebytes(codeData, cdoff, 0x83, 0xC4, (char)(stackcnt * 4));
+	codeData[cdoff++] = 0xC3;
+	assert(cdoff == memsz);
+	if ((*(char*)address & 0xFF) == 0xE8)
+		WriteCall((void*)address, codeData);
+	else
+		WriteJump((void*)address, codeData);
+}
+
 extern "C" {
 	__declspec(dllexport) void Init(
 		const char* path,
@@ -290,7 +594,8 @@ extern "C" {
 		const IniFile settings{ std::string{ path } + "\\config.ini" };
 
 		// my flipscreen "compatibility" fix (ie, stealing their entire mod)
-		if (const auto fs_settings =
+		if (
+			const auto fs_settings =
 				settings.getGroup("FlipScreen Settings")
 		) {
 			const auto s_flipmode = fs_settings->getString("Flipmode", "None");
@@ -315,7 +620,8 @@ extern "C" {
 		}
 
 		// my mod settings
-		if (const auto mm4_settings =
+		if (
+			const auto mm4_settings =
 				settings.getGroup("Mirror Mission 4 Settings")
 		) {
 			const auto s_flipmode =
@@ -425,6 +731,20 @@ extern "C" {
 		WriteJump(
 			reinterpret_cast<void*>(0x427AA0),
 			matrix4x4_Lookat_hook_replacement
+		);
+
+		// fix mech's gun firing backwards when mirroring player on x xor z
+		GenerateUsercallHook_Fixed(
+			change_in_gun_angle_maybe,
+			rEAX, 0x741B12,
+			rEBX, rEDI, rESI
+		);
+
+		// fix mech's upper body (the spinny part) from facing backwardsish
+		GenerateUsercallHook_Fixed(
+			add_angles_maybe_but_probably_not,
+			rEAX, 0x741BDC,
+			rEAX, rEDX, rCX
 		);
 	}
 
